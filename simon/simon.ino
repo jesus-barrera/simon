@@ -1,5 +1,8 @@
-#define MAX_SEQUENCE_LENGTH 100
+#define MAX_SEQUENCE_LENGTH 255
+
 #define NO_INPUT 0
+
+#define INPUT_DELAY 100
 
 // Pause before playing the next sequence.
 #define PAUSE_DELAY 1000
@@ -17,7 +20,6 @@ void playSequence();
 // Pins connected to the LEDs/pushbuttons
 byte pins[] = {2, 3, 4};
 
-// NOTE: sequence could be "infinite" if in each turn we reset the random seed to the same value an simply generate the elements again up to sequence length without storing them.
 byte sequence[MAX_SEQUENCE_LENGTH];
 byte sequenceLength;
 byte asserts;
@@ -34,15 +36,11 @@ void loop() {
   static byte input;
 
   if (asserts < sequenceLength) {
-    input = readInput();
+    if (input = readInput()) {
+      do {
+        delay(INPUT_DELAY);
+      } while (readInput()); // wait for button release
 
-    if (input) {
-      // Wait for button release, otherwise we'll detect multiple presses
-      // on the same button.
-      while (readInput());
-
-      // Check if the pressed button matches the next element
-      // in the sequence.
       if (input == sequence[asserts]) {
         asserts++;
       } else {
@@ -51,12 +49,10 @@ void loop() {
       }
     }
   } else {
-    if (sequenceLength < MAX_SEQUENCE_LENGTH) {
-      // Add random element to the sequence
-      sequence[sequenceLength++] = pins[ random(0, sizeof(pins)) ];  
-    }
-
     delay(PAUSE_DELAY);
+
+    // add random item to the sequence
+    sequence[sequenceLength++] = pins[ random(0, sizeof(pins)) ];
     playSequence();
     asserts = 0;
   }
@@ -78,7 +74,7 @@ void playSequence() {
     delay(PLAY_DELAY);
     digitalWrite(sequence[i], HIGH);
 
-    if (i++ < sequenceLength) {
+    if (++i < sequenceLength) {
       delay(PLAY_DELAY);
     } else {
       break;
