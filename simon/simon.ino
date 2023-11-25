@@ -1,21 +1,14 @@
 #include "pitches.h"
 
-#define MAX_SEQUENCE_LENGTH 255
-
-#define NO_INPUT -1
-
-#define INPUT_DELAY 100
-
-// Pause before playing the next sequence.
-#define PAUSE_DELAY 1000
-
-// Number of milliseconds each LED is on when playing the sequence.
-#define PLAY_DELAY 250
-
-#define BUZZER_PIN 8
+#define SIMON_MAX_SEQUENCE_LENGTH 255
+#define SIMON_NO_INPUT -1
+#define SIMON_INPUT_POLL_INTERVAL 100
+#define SIMON_PLAY_SPEED 250
+#define SIMON_NEXT_PAUSE 1000
+#define SIMON_BUZZER_PIN 8
 
 // Checks the pushbuttons' state and returns the first that is
-// pressed, or NO_INPUT if none.
+// pressed, or SIMON_NO_INPUT if none.
 int readInput();
 
 // Plays the current sequence.
@@ -25,54 +18,61 @@ void playSequence();
 byte pins[] = {2, 3, 4, 5};
 byte pinsNotes[] = {NOTE_C3, NOTE_D3, NOTE_E3, NOTE_F3};
 
-byte sequence[MAX_SEQUENCE_LENGTH];
+byte sequence[SIMON_MAX_SEQUENCE_LENGTH];
 byte sequenceLength;
 byte asserts;
+bool gameOver;
 
 void setup() {
-  Serial.begin(9600);
-  randomSeed(analogRead(0));
-
+  gameOver = false;
   asserts = 0;
   sequenceLength = 0;
+
+  randomSeed(analogRead(0));
 }
 
 void loop() {
-  static int input;
+  int input;
 
-  if (asserts < sequenceLength) {
-    input = readInput();
-    
-    if (input != NO_INPUT) {
-      if (input == sequence[asserts]) {
-        asserts++;
-      } else {
-        Serial.println("Game Over! Press restart.");
-        while (true);
-      }
+  if (gameOver) {
+    return;
+  }
 
-      tone(BUZZER_PIN, pinsNotes[input]);
-
-      // wait for button release
-      do {
-        delay(INPUT_DELAY);
-      } while (readInput() == input);
-
-      noTone(BUZZER_PIN);
-    }
-  } else {
-    delay(PAUSE_DELAY);
-
-    // add random item to the sequence
+  // When the sequence is completed by the user, add new item
+  if (asserts == sequenceLength) {
+    delay(SIMON_NEXT_PAUSE);
     sequence[sequenceLength++] = random(0, sizeof(pins));
     playSequence();
     asserts = 0;
   }
+
+  // Wait for the user to repeat the sequence
+  input = readInput();
+  
+  if (input == SIMON_NO_INPUT) {
+    return;
+  }
+
+  if (input == sequence[asserts]) {
+    asserts++;
+  } else {
+    gameOver = true;
+    return;
+  }
+
+  // Play tone while pressed
+  tone(SIMON_BUZZER_PIN, pinsNotes[input]);
+
+  do {
+    delay(SIMON_INPUT_POLL_INTERVAL);
+  } while (readInput() == input);
+
+  noTone(SIMON_BUZZER_PIN);
 }
 
 void playSequence() {
-  byte i;
-
+  int i;
+  
   // Configure pins as OUTPUT 
   for (i = 0; i < sizeof(pins); i++) {
     pinMode(pins[i], OUTPUT);
@@ -80,22 +80,21 @@ void playSequence() {
   }
 
   // Play sequence
-  i = 0;
-  while (true) {
-    // play note and turn LED on
-    tone(BUZZER_PIN, pinsNotes[sequence[i]]);
-    digitalWrite(pins[sequence[i]], LOW);
+  for (i = 0; i < sequenceLength; i++) {
+    byte pin = sequence[i];
     
-    delay(PLAY_DELAY); 
+    // On
+    digitalWrite(pins[pin], LOW);
+    tone(SIMON_BUZZER_PIN, pinsNotes[pin]);
+    delay(SIMON_PLAY_SPEED);
+    
+    // Off
+    digitalWrite(pins[pin], HIGH);
+    noTone(SIMON_BUZZER_PIN);
 
-    // buzzer and LED off
-    noTone(BUZZER_PIN);
-    digitalWrite(pins[sequence[i]], HIGH);
-
-    if (++i < sequenceLength) {
-      delay(PLAY_DELAY);
-    } else {
-      break;
+    // Wait before next
+    if ((i + 1) < sequenceLength) {
+      delay(SIMON_PLAY_SPEED);
     }
   }
 
@@ -112,5 +111,5 @@ int readInput() {
     }
   }
 
-  return NO_INPUT;
+  return SIMON_NO_INPUT;
 }
