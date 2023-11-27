@@ -1,11 +1,18 @@
 #include "pitches.h"
 
+#define ARRAY_LEN(arr) sizeof(arr) / sizeof(*arr)
+
 #define SIMON_MAX_SEQUENCE_LENGTH 255
 #define SIMON_NO_INPUT -1
 #define SIMON_INPUT_POLL_INTERVAL 100
 #define SIMON_PLAY_SPEED 250
 #define SIMON_NEXT_PAUSE 1000
-#define SIMON_BUZZER_PIN 8
+#define SIMON_BUZZER_PIN 6
+
+struct Note {
+  unsigned int note;
+  double duration;
+};
 
 // Checks the pushbuttons' state and returns the first that is
 // pressed, or SIMON_NO_INPUT if none.
@@ -14,10 +21,23 @@ int readInput();
 // Plays the current sequence.
 void playSequence();
 
+// Plays a melody
+void playMelody(Note notes[], int length, int bpm = 120);
+
 // Pins connected to the LEDs/pushbuttons
 byte pins[] = {2, 3, 4, 5};
 byte pinsNotes[] = {NOTE_C3, NOTE_D3, NOTE_E3, NOTE_F3};
 
+// Sounds
+Note startMelody[] = { 
+  {NOTE_C3, 16}, {NOTE_D3, 16}, {NOTE_F3, 4} 
+};
+
+Note failMelody[] = { 
+  {NOTE_F3, 16}, {NOTE_E3, 16}, {NOTE_D3, 16}, {NOTE_A2, 4} 
+};
+
+// Game state
 byte sequence[SIMON_MAX_SEQUENCE_LENGTH];
 byte sequenceLength;
 byte asserts;
@@ -28,7 +48,9 @@ void setup() {
   asserts = 0;
   sequenceLength = 0;
 
+  Serial.begin(9600);
   randomSeed(analogRead(0));
+  playMelody(startMelody, ARRAY_LEN(startMelody));
 }
 
 void loop() {
@@ -56,6 +78,7 @@ void loop() {
   if (input == sequence[asserts]) {
     asserts++;
   } else {
+    playMelody(failMelody, ARRAY_LEN(failMelody));
     gameOver = true;
     return;
   }
@@ -112,4 +135,13 @@ int readInput() {
   }
 
   return SIMON_NO_INPUT;
+}
+
+void playMelody(Note notes[], int length, int bpm = 120) {
+  for (int i = 0; i < length; i++) {  
+    unsigned int duration = (4.0 / notes[i].duration) * (60000 / bpm);
+
+    tone(SIMON_BUZZER_PIN, notes[i].note, duration);
+    delay(duration);
+  }
 }
