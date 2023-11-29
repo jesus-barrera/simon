@@ -1,3 +1,4 @@
+#include <TimerOne.h>
 #include "pitches.h"
 
 #define ARRAY_LEN(arr) sizeof(arr) / sizeof(*arr)
@@ -14,15 +15,40 @@ struct Note {
   double duration;
 };
 
-// Checks the pushbuttons' state and returns the first that is
-// pressed, or SIMON_NO_INPUT if none.
-int readInput();
-
 // Plays the current sequence.
 void playSequence();
 
+// Display current score
+void displayScore();
+
 // Plays a melody
 void playMelody(Note notes[], int length, int bpm = 120);
+
+// Checks the pushbuttons' state and returns the first that is pressed, or SIMON_NO_INPUT if none.
+int readInput();
+
+// Initializes an array of pins
+void setPins(byte pins[], int length, byte mode, byte val = -1);
+
+// BCD numbers
+byte numbers[][4] = {
+  {0, 0, 0, 0},
+  {0, 0, 0, 1},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 1, 0, 0},
+  {0, 1, 0, 1},
+  {0, 1, 1, 0},
+  {0, 1, 1, 1},
+  {1, 0, 0, 0},
+  {1, 0, 0, 1}
+};
+
+// BCD decoder pins
+byte decoderPins[] = {10, 9, 8, 7};
+
+// Pins connected to the tens/units displays
+byte digitsPins[] = {12, 11};
 
 // Pins connected to the LEDs/pushbuttons
 byte pins[] = {2, 3, 4, 5};
@@ -41,16 +67,25 @@ Note failMelody[] = {
 byte sequence[SIMON_MAX_SEQUENCE_LENGTH];
 byte sequenceLength;
 byte asserts;
+byte score;
 bool gameOver;
 
 void setup() {
   gameOver = false;
   asserts = 0;
   sequenceLength = 0;
-
-  Serial.begin(9600);
+  score = 0;
+  
   randomSeed(analogRead(0));
+  Serial.begin(9600);
+  
+  setPins(decoderPins, ARRAY_LEN(decoderPins), OUTPUT);
+  setPins(digitsPins, ARRAY_LEN(digitsPins), OUTPUT);
+  setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
   playMelody(startMelody, ARRAY_LEN(startMelody));
+
+  Timer1.initialize(10000);
+  Timer1.attachInterrupt(displayScore);
 }
 
 void loop() {
@@ -63,7 +98,7 @@ void loop() {
   // When the sequence is completed by the user, add new item
   if (asserts == sequenceLength) {
     delay(SIMON_NEXT_PAUSE);
-    sequence[sequenceLength++] = random(0, sizeof(pins));
+    sequence[sequenceLength++] = random(0, ARRAY_LEN(pins));
     playSequence();
     asserts = 0;
   }
@@ -91,16 +126,17 @@ void loop() {
   } while (readInput() == input);
 
   noTone(SIMON_BUZZER_PIN);
+
+  if (asserts == sequenceLength) {
+    score++;
+  }
 }
 
 void playSequence() {
   int i;
   
-  // Configure pins as OUTPUT 
-  for (i = 0; i < sizeof(pins); i++) {
-    pinMode(pins[i], OUTPUT);
-    digitalWrite(pins[i], HIGH);
-  }
+  // Configure pins as OUTPUT
+  setPins(pins, ARRAY_LEN(pins), OUTPUT, HIGH);
 
   // Play sequence
   for (i = 0; i < sequenceLength; i++) {
@@ -122,19 +158,36 @@ void playSequence() {
   }
 
   // Configure pins as INPUT_PULLUP again
-  for (i = 0; i < sizeof(pins); i++) {
-    pinMode(pins[i], INPUT_PULLUP);
-  }
+  setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
 }
 
-int readInput() {
-  for (int i = 0; i < sizeof(pins); i++) {
-    if (digitalRead(pins[i]) == LOW) {
-      return i;
-    }
+void displayScore() {
+  static byte digit = 0; // 0 = units, 1 = tens... etc.
+  int i;
+  int rest = score;
+  int number;
+
+  // Get the number for the current digit
+  for (i = 0; i <= digit; i++) {
+    number = rest % 10;
+    rest = rest / 10;
   }
 
-  return SIMON_NO_INPUT;
+  // Turn off displays
+  for (i = 0; i < ARRAY_LEN(digitsPins); i++) {
+    digitalWrite(digitsPins[i], LOW);
+  }
+
+  // Update number
+  for (i = 0; i < ARRAY_LEN(decoderPins); i++) {
+    digitalWrite(decoderPins[i], numbers[number][i]);
+  }
+
+  // Turn on display for the current digit
+  digitalWrite(digitsPins[digit], HIGH);
+
+  // Alternate digits
+  digit = (digit + 1) % ARRAY_LEN(digitsPins);
 }
 
 void playMelody(Note notes[], int length, int bpm = 120) {
@@ -143,5 +196,27 @@ void playMelody(Note notes[], int length, int bpm = 120) {
 
     tone(SIMON_BUZZER_PIN, notes[i].note, duration);
     delay(duration);
+  }
+}
+
+int readInput() {
+  for (int i = 0; i < ARRAY_LEN(pins); i++) {
+    if (digitalRead(pins[i]) == LOW) {
+      return i;
+    }
+  }
+
+  return SIMON_NO_INPUT;
+}
+
+void setPins(byte pins[], int length, byte mode, byte val = -1) {
+  int i;
+
+  for (i = 0; i < length; i++) {
+    pinMode(pins[i], mode);
+
+    if (mode == OUTPUT && val != -1) {
+      digitalWrite(pins[i], val);
+    }
   }
 }
