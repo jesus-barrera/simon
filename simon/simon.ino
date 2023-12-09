@@ -9,6 +9,7 @@
 #define SIMON_PLAY_SPEED 250
 #define SIMON_NEXT_PAUSE 1000
 #define SIMON_BUZZER_PIN 6
+#define SIMON_DISPLAY_INTERRUPT 10000
 
 struct Note {
   unsigned int note;
@@ -84,7 +85,7 @@ void setup() {
   setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
   playMelody(startMelody, ARRAY_LEN(startMelody));
 
-  Timer1.initialize(10000);
+  Timer1.initialize(SIMON_DISPLAY_INTERRUPT);
   Timer1.attachInterrupt(displayScore);
 }
 
@@ -183,8 +184,10 @@ void displayScore() {
     digitalWrite(decoderPins[i], numbers[number][i]);
   }
 
-  // Turn on display for the current digit
-  digitalWrite(digitsPins[digit], HIGH);
+  // Turn on display for the current digit (leading zeros are not displayed)
+  if (number != 0 || digit == 0) {
+    digitalWrite(digitsPins[digit], HIGH);
+  }
 
   // Alternate digits
   digit = (digit + 1) % ARRAY_LEN(digitsPins);
