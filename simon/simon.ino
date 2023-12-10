@@ -1,38 +1,51 @@
-#include <TimerOne.h>
 #include "pitches.h"
 
 #define ARRAY_LEN(arr) sizeof(arr) / sizeof(*arr)
 
 #define SIMON_MAX_SEQUENCE_LENGTH 255
 #define SIMON_NO_INPUT -1
-#define SIMON_INPUT_POLL_INTERVAL 100
+#define SIMON_SOUND_START 1
+#define SIMON_SOUND_FAIL 2
+#define SIMON_BUZZER_PIN 6
+#define SIMON_INPUT_INTERVAL 100
 #define SIMON_PLAY_SPEED 250
 #define SIMON_NEXT_PAUSE 1000
-#define SIMON_BUZZER_PIN 6
-#define SIMON_DISPLAY_INTERRUPT 10000
+#define SIMON_DISPLAY_RATE 1
 
 struct Note {
   unsigned int note;
   double duration;
 };
 
-// Plays the current sequence.
-void playSequence();
+// Resets the game state
+void reset();
+
+// Initializes an array of pins
+void setPins(uint8_t pins[], int length, uint8_t mode, uint8_t val = -1);
+
+// Sets the current playing sound
+void setSound(int id);
 
 // Display current score
 void displayScore();
 
-// Plays a melody
-void playMelody(Note notes[], int length, int bpm = 120);
+// Plays the current sound
+bool playSound();
 
-// Checks the pushbuttons' state and returns the first that is pressed, or SIMON_NO_INPUT if none.
+// Plays a melody
+bool playNotes(Note notes[], int length, int bpm = 120);
+
+// Plays the current sequence
+bool playSequence();
+
+// Checks player input
+bool assertSequence();
+
+// Gets the button being pressed, if any
 int readInput();
 
-// Initializes an array of pins
-void setPins(byte pins[], int length, byte mode, byte val = -1);
-
 // BCD numbers
-byte numbers[][4] = {
+uint8_t numbers[][4] = {
   {0, 0, 0, 0},
   {0, 0, 0, 1},
   {0, 0, 1, 0},
@@ -46,127 +59,145 @@ byte numbers[][4] = {
 };
 
 // BCD decoder pins
-byte decoderPins[] = {10, 9, 8, 7};
+uint8_t decoderPins[] = {10, 9, 8, 7};
 
 // Pins connected to the tens/units displays
-byte digitsPins[] = {12, 11};
+uint8_t digitsPins[] = {12, 11};
 
 // Pins connected to the LEDs/pushbuttons
-byte pins[] = {2, 3, 4, 5};
-byte pinsNotes[] = {NOTE_C3, NOTE_D3, NOTE_E3, NOTE_F3};
+uint8_t pins[] = {2, 3, 4, 5};
+uint8_t pinsNotes[] = {NOTE_C3, NOTE_D3, NOTE_E3, NOTE_F3};
 
 // Sounds
-Note startMelody[] = { 
+Note startSound[] = { 
   {NOTE_C3, 16}, {NOTE_D3, 16}, {NOTE_F3, 4} 
 };
 
-Note failMelody[] = { 
+Note failSound[] = { 
   {NOTE_F3, 16}, {NOTE_E3, 16}, {NOTE_D3, 16}, {NOTE_A2, 4} 
 };
 
 // Game state
-byte sequence[SIMON_MAX_SEQUENCE_LENGTH];
-byte sequenceLength;
-byte asserts;
-byte score;
-bool gameOver;
+uint8_t sequence[SIMON_MAX_SEQUENCE_LENGTH];
+uint8_t sequenceLength;
+uint8_t asserts;
+uint8_t score;
+uint8_t sound;
 
-void setup() {
-  gameOver = false;
-  asserts = 0;
-  sequenceLength = 0;
-  score = 0;
-  
+bool isGameOver;
+bool isSequencePlaying;
+bool isPlayerTurn;
+
+// Loop state
+unsigned long noteDuration;
+bool isLedOn;
+int currentNote;
+int currentLed;
+
+unsigned long currentTime = 0;
+
+void setup() { 
   randomSeed(analogRead(0));
   Serial.begin(9600);
   
+  reset();
   setPins(decoderPins, ARRAY_LEN(decoderPins), OUTPUT);
   setPins(digitsPins, ARRAY_LEN(digitsPins), OUTPUT);
-  setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
-  playMelody(startMelody, ARRAY_LEN(startMelody));
-
-  Timer1.initialize(SIMON_DISPLAY_INTERRUPT);
-  Timer1.attachInterrupt(displayScore);
 }
 
 void loop() {
-  int input;
+  static unsigned long lastAssertTime = 0;
 
-  if (gameOver) {
-    return;
+  currentTime = millis();
+  
+  displayScore();
+
+  if (sound && !playSound()) {
+    sound = 0;
   }
-
-  // When the sequence is completed by the user, add new item
-  if (asserts == sequenceLength) {
-    delay(SIMON_NEXT_PAUSE);
+  
+  if (
+    sound == 0
+    && !isGameOver 
+    && !isPlayerTurn 
+    && !isSequencePlaying 
+    && (currentTime - lastAssertTime) >= SIMON_NEXT_PAUSE
+  ) {
     sequence[sequenceLength++] = random(0, ARRAY_LEN(pins));
-    playSequence();
+    setPins(pins, ARRAY_LEN(pins), OUTPUT, HIGH);
+    isSequencePlaying = true;
     asserts = 0;
   }
 
-  // Wait for the user to repeat the sequence
-  input = readInput();
-  
-  if (input == SIMON_NO_INPUT) {
-    return;
-  }
+  if (isSequencePlaying) {
+    isSequencePlaying = playSequence();
 
-  if (input == sequence[asserts]) {
-    asserts++;
-  } else {
-    playMelody(failMelody, ARRAY_LEN(failMelody));
-    gameOver = true;
-    return;
-  }
-
-  // Play tone while pressed
-  tone(SIMON_BUZZER_PIN, pinsNotes[input]);
-
-  do {
-    delay(SIMON_INPUT_POLL_INTERVAL);
-  } while (readInput() == input);
-
-  noTone(SIMON_BUZZER_PIN);
-
-  if (asserts == sequenceLength) {
-    score++;
-  }
-}
-
-void playSequence() {
-  int i;
-  
-  // Configure pins as OUTPUT
-  setPins(pins, ARRAY_LEN(pins), OUTPUT, HIGH);
-
-  // Play sequence
-  for (i = 0; i < sequenceLength; i++) {
-    byte pin = sequence[i];
-    
-    // On
-    digitalWrite(pins[pin], LOW);
-    tone(SIMON_BUZZER_PIN, pinsNotes[pin]);
-    delay(SIMON_PLAY_SPEED);
-    
-    // Off
-    digitalWrite(pins[pin], HIGH);
-    noTone(SIMON_BUZZER_PIN);
-
-    // Wait before next
-    if ((i + 1) < sequenceLength) {
-      delay(SIMON_PLAY_SPEED);
+    if (!isSequencePlaying) {
+      setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
+      isPlayerTurn = true;
     }
   }
 
-  // Configure pins as INPUT_PULLUP again
+  if (isPlayerTurn) {
+    isPlayerTurn = assertSequence();
+
+    if (!isPlayerTurn) {
+      if (asserts == sequenceLength) {
+        score++;
+        lastAssertTime = currentTime;
+      } else {
+        isGameOver = true;
+        setSound(SIMON_SOUND_FAIL);
+      }
+    }
+  }
+}
+
+void reset() {
+  isGameOver = false;
+  isSequencePlaying = false;
+  isPlayerTurn = false;
+  sound = SIMON_SOUND_START;
+  asserts = 0;
+  sequenceLength = 0;
+  score = 0;
+  isLedOn = false;
+  currentLed = 0;
+  
   setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
+  setSound(SIMON_SOUND_START);
+}
+
+void setPins(uint8_t pins[], int length, uint8_t mode, uint8_t val = -1) {
+  int i;
+
+  for (i = 0; i < length; i++) {
+    pinMode(pins[i], mode);
+
+    if (mode == OUTPUT && val != -1) {
+      digitalWrite(pins[i], val);
+    }
+  }
+}
+
+void setSound(int id) {
+  sound = id;
+  noteDuration = 0;
+  currentNote = 0;
 }
 
 void displayScore() {
-  static byte digit = 0; // 0 = units, 1 = tens... etc.
+  static unsigned long previousTime = 0;
+  static uint8_t digit = 0; // 0 = units, 1 = tens... etc.
   int i;
   int rest = score;
   int number;
+
+  if (currentTime - previousTime < SIMON_DISPLAY_RATE) {
+    return;
+  }
+
+  previousTime = currentTime;
 
   // Get the number for the current digit
   for (i = 0; i <= digit; i++) {
@@ -193,13 +224,94 @@ void displayScore() {
   digit = (digit + 1) % ARRAY_LEN(digitsPins);
 }
 
-void playMelody(Note notes[], int length, int bpm = 120) {
-  for (int i = 0; i < length; i++) {  
-    unsigned int duration = (4.0 / notes[i].duration) * (60000 / bpm);
-
-    tone(SIMON_BUZZER_PIN, notes[i].note, duration);
-    delay(duration);
+bool playSound() {
+  if (sound == SIMON_SOUND_START) {
+    return playNotes(startSound, ARRAY_LEN(startSound));
   }
+  
+  if (sound == SIMON_SOUND_FAIL) {
+    return playNotes(failSound, ARRAY_LEN(failSound));
+  }
+
+  return false;
+}
+
+bool playNotes(Note notes[], int length, int bpm = 120) {
+  static unsigned long previousTime = 0;
+
+  if (currentNote >= length) {
+    currentNote = 0;
+    
+    return false;
+  }
+
+  if (currentTime - previousTime >= noteDuration) {
+    previousTime = currentTime;    
+    noteDuration = (4.0 / notes[currentNote].duration) * (60000 / bpm);
+    tone(SIMON_BUZZER_PIN, notes[currentNote].note, noteDuration);
+    currentNote++;
+  }
+
+  return true;
+}
+
+bool playSequence() {
+  static unsigned long previousTime = 0;
+  uint8_t pin;
+
+  if (currentLed >= sequenceLength) {
+    isLedOn = false;
+    currentLed = 0;
+    
+    return false;
+  }
+
+  pin = sequence[currentLed];
+
+  if (currentTime - previousTime >= SIMON_PLAY_SPEED) {
+    previousTime = currentTime;
+
+    if (!isLedOn) {
+      digitalWrite(pins[pin], LOW);
+      tone(SIMON_BUZZER_PIN, pinsNotes[pin]);
+    } else {
+      digitalWrite(pins[pin], HIGH);
+      noTone(SIMON_BUZZER_PIN);
+      currentLed++;
+    }
+
+    isLedOn = !isLedOn;
+  }
+
+  return true;
+}
+
+bool assertSequence() {
+  static int previousInput = SIMON_NO_INPUT;
+  static unsigned long previousTime = 0;
+  int input = readInput();
+
+  if ((currentTime - previousTime < SIMON_INPUT_INTERVAL) || input == previousInput) {
+    return true;
+  }
+
+  previousTime = currentTime;
+  previousInput = input;
+
+  if (input == SIMON_NO_INPUT) {
+    noTone(SIMON_BUZZER_PIN);
+
+    if (asserts == sequenceLength) {
+      return false;
+    }
+  } else if (input == sequence[asserts]) {
+    tone(SIMON_BUZZER_PIN, pinsNotes[input]);
+    asserts++;
+  } else {
+    return false;
+  }
+
+  return true;
 }
 
 int readInput() {
@@ -210,16 +322,4 @@ int readInput() {
   }
 
   return SIMON_NO_INPUT;
-}
-
-void setPins(byte pins[], int length, byte mode, byte val = -1) {
-  int i;
-
-  for (i = 0; i < length; i++) {
-    pinMode(pins[i], mode);
-
-    if (mode == OUTPUT && val != -1) {
-      digitalWrite(pins[i], val);
-    }
-  }
 }
