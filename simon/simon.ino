@@ -3,18 +3,25 @@
 #define ARRAY_LEN(arr) sizeof(arr) / sizeof(*arr)
 
 #define SIMON_MAX_SEQUENCE_LENGTH 255
-#define SIMON_NO_INPUT -1
-#define SIMON_SOUND_START 1
-#define SIMON_SOUND_FAIL 2
-#define SIMON_BUZZER_PIN 6
-#define SIMON_INPUT_INTERVAL 100
 #define SIMON_PLAY_SPEED 250
 #define SIMON_NEXT_PAUSE 1000
 #define SIMON_DISPLAY_RATE 1
+#define SIMON_SOUND_START 1
+#define SIMON_SOUND_FAIL 2
+#define SIMON_NO_INPUT -1
+#define SIMON_POLL_INTERVAL 100
+#define SIMON_BTN_PRESS 0
+#define SIMON_BTN_RELEASE 1
+#define SIMON_BUZZER_PIN 6
 
 struct Note {
   unsigned int note;
   double duration;
+};
+
+struct Event {
+  uint8_t btn;
+  uint8_t type;
 };
 
 // Resets the game state
@@ -39,7 +46,10 @@ bool playNotes(Note notes[], int length, int bpm = 120);
 bool playSequence();
 
 // Checks player input
-bool assertSequence();
+bool assertSequence(Event* event);
+
+// Gets the next available event
+bool pollEvent(Event* event);
 
 // Gets the button being pressed, if any
 int readInput();
@@ -94,6 +104,7 @@ bool isLedOn;
 int currentNote;
 int currentLed;
 
+unsigned long lastAssertTime = 0;
 unsigned long currentTime = 0;
 
 void setup() { 
@@ -106,19 +117,23 @@ void setup() {
 }
 
 void loop() {
-  static unsigned long lastAssertTime = 0;
+  Event event;
+  bool hasEvent = false;
 
   currentTime = millis();
+  hasEvent = pollEvent(&event);
   
   displayScore();
+
+  if (isGameOver && hasEvent && event.type == SIMON_BTN_RELEASE) {
+    reset();
+  }
 
   if (sound && !playSound()) {
     sound = 0;
   }
   
-  if (
-    sound == 0
-    && !isGameOver 
+  if (!isGameOver 
     && !isPlayerTurn 
     && !isSequencePlaying 
     && (currentTime - lastAssertTime) >= SIMON_NEXT_PAUSE
@@ -138,8 +153,8 @@ void loop() {
     }
   }
 
-  if (isPlayerTurn) {
-    isPlayerTurn = assertSequence();
+  if (isPlayerTurn && hasEvent) {
+    isPlayerTurn = assertSequence(&event);
 
     if (!isPlayerTurn) {
       if (asserts == sequenceLength) {
@@ -147,7 +162,6 @@ void loop() {
         lastAssertTime = currentTime;
       } else {
         isGameOver = true;
-        setSound(SIMON_SOUND_FAIL);
       }
     }
   }
@@ -163,6 +177,7 @@ void reset() {
   score = 0;
   isLedOn = false;
   currentLed = 0;
+  lastAssertTime = currentTime;
   
   setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
   setSound(SIMON_SOUND_START);
@@ -286,36 +301,61 @@ bool playSequence() {
   return true;
 }
 
-bool assertSequence() {
-  static int previousInput = SIMON_NO_INPUT;
-  static unsigned long previousTime = 0;
-  int input = readInput();
+bool assertSequence(Event* event) {
+  if (event->type == SIMON_BTN_PRESS) {
+    if (event->btn != sequence[asserts]) {
+      setSound(SIMON_SOUND_FAIL);
+    } else {
+      tone(SIMON_BUZZER_PIN, pinsNotes[event->btn]);
+    }
+  } else if (event->type == SIMON_BTN_RELEASE) {
+    if (event->btn != sequence[asserts]) {
+      return false;
+    }
 
-  if ((currentTime - previousTime < SIMON_INPUT_INTERVAL) || input == previousInput) {
-    return true;
-  }
-
-  previousTime = currentTime;
-  previousInput = input;
-
-  if (input == SIMON_NO_INPUT) {
+    asserts++;
     noTone(SIMON_BUZZER_PIN);
-
+    
     if (asserts == sequenceLength) {
       return false;
     }
-  } else if (input == sequence[asserts]) {
-    tone(SIMON_BUZZER_PIN, pinsNotes[input]);
-    asserts++;
-  } else {
-    return false;
   }
 
   return true;
 }
 
+bool pollEvent(Event* event) {
+  static int previousInput = SIMON_NO_INPUT;
+  static unsigned long previousTime = 0;
+  int input;
+
+  if (currentTime - previousTime < SIMON_POLL_INTERVAL) {
+    return false;
+  }
+  
+  previousTime = currentTime;
+  input = readInput();
+
+  if (input == previousInput) {
+    return false;
+  }
+
+  if (input == SIMON_NO_INPUT) {
+    event->type = SIMON_BTN_RELEASE;
+    event->btn = previousInput;
+  } else {
+    event->type = SIMON_BTN_PRESS;
+    event->btn = input;
+  }
+
+  previousInput = input;
+
+  return true;
+}
+
 int readInput() {
-  for (int i = 0; i < ARRAY_LEN(pins); i++) {
+  // Ignore pins while the sequence is playing as the pins are configured as outputs
+  for (int i = 0; !isSequencePlaying && i < ARRAY_LEN(pins); i++) {
     if (digitalRead(pins[i]) == LOW) {
       return i;
     }
