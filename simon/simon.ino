@@ -3,9 +3,11 @@
 #define ARRAY_LEN(arr) sizeof(arr) / sizeof(*arr)
 
 #define SIMON_MAX_SEQUENCE_LENGTH 255
-#define SIMON_PLAY_SPEED 250
-#define SIMON_NEXT_PAUSE 1000
-#define SIMON_DISPLAY_RATE 1
+#define SIMON_BASE_SPEED 250
+#define SIMON_NEXT_DELAY 1000
+#define SIMON_RESET_DELAY 1500
+#define SIMON_DISPLAY_INTERVAL 1
+#define SIMON_BLINK_INTERVAL 250
 #define SIMON_SOUND_START 1
 #define SIMON_SOUND_FAIL 2
 #define SIMON_NO_INPUT -1
@@ -13,6 +15,13 @@
 #define SIMON_BTN_PRESS 0
 #define SIMON_BTN_RELEASE 1
 #define SIMON_BUZZER_PIN 6
+
+enum Mode { 
+  SIMON_MODE_1 = 1, 
+  SIMON_MODE_2, 
+  SIMON_MODE_3, 
+  SIMON_TOTAL_MODES = 3
+};
 
 struct Note {
   unsigned int note;
@@ -24,8 +33,23 @@ struct Event {
   uint8_t type;
 };
 
-// Resets the game state
-void reset();
+// Updates the mode selection menu
+void menuLoop(Event* event);
+
+// Updates the gameplay
+void gameLoop(Event* event);
+
+// Goes to the mode selection menu
+void startMenu();
+
+// Starts the game in the selected mode
+void startGame();
+
+// Adds items to the sequence
+void addToSequence(int count);
+
+// Sets the game mode
+void setMode(int mode);
 
 // Initializes an array of pins
 void setPins(uint8_t pins[], int length, uint8_t mode, uint8_t val = -1);
@@ -34,7 +58,7 @@ void setPins(uint8_t pins[], int length, uint8_t mode, uint8_t val = -1);
 void setSound(int id);
 
 // Display current score
-void displayScore();
+void updateDisplay();
 
 // Plays the current sound
 bool playSound();
@@ -92,8 +116,15 @@ uint8_t sequence[SIMON_MAX_SEQUENCE_LENGTH];
 uint8_t sequenceLength;
 uint8_t asserts;
 uint8_t score;
+uint8_t increment;
+uint8_t initial;
+uint8_t speed;
+uint8_t mode;
 uint8_t sound;
+uint8_t* displayVal;
 
+bool isDisplayBlinking;
+bool isPlaying;
 bool isGameOver;
 bool isSequencePlaying;
 bool isPlayerTurn;
@@ -107,13 +138,14 @@ int currentLed;
 unsigned long lastAssertTime = 0;
 unsigned long currentTime = 0;
 
-void setup() { 
+void setup() {
+  mode = 1; 
+  
   randomSeed(analogRead(0));
   Serial.begin(9600);
-  
-  reset();
   setPins(decoderPins, ARRAY_LEN(decoderPins), OUTPUT);
   setPins(digitsPins, ARRAY_LEN(digitsPins), OUTPUT);
+  startMenu();
 }
 
 void loop() {
@@ -123,10 +155,36 @@ void loop() {
   currentTime = millis();
   hasEvent = pollEvent(&event);
   
-  displayScore();
+  updateDisplay();
 
-  if (isGameOver && hasEvent && event.type == SIMON_BTN_RELEASE) {
-    reset();
+  if (sound && !playSound()) {
+    sound = 0;
+  }
+
+  if (isPlaying) {
+    gameLoop(hasEvent ? &event : NULL);
+  } else {
+    menuLoop(hasEvent ? &event : NULL);
+  }
+}
+
+void menuLoop(Event* event) {
+  if (event && event->type == SIMON_BTN_PRESS) {
+    if (event->btn == 2) {
+      mode = (mode % SIMON_TOTAL_MODES) + 1;
+    }
+  }
+
+  if (event && event->type == SIMON_BTN_RELEASE && event->btn == 3) {
+    startGame();
+  }
+}
+
+void gameLoop(Event* event) {
+  static unsigned long gameOverTime = 0;
+  
+  if (isGameOver && currentTime - gameOverTime >= SIMON_RESET_DELAY) {
+    startMenu();
   }
 
   if (sound && !playSound()) {
@@ -136,9 +194,9 @@ void loop() {
   if (!isGameOver 
     && !isPlayerTurn 
     && !isSequencePlaying 
-    && (currentTime - lastAssertTime) >= SIMON_NEXT_PAUSE
+    && (currentTime - lastAssertTime) >= SIMON_NEXT_DELAY
   ) {
-    sequence[sequenceLength++] = random(0, ARRAY_LEN(pins));
+    addToSequence(increment);
     setPins(pins, ARRAY_LEN(pins), OUTPUT, HIGH);
     isSequencePlaying = true;
     asserts = 0;
@@ -153,8 +211,8 @@ void loop() {
     }
   }
 
-  if (isPlayerTurn && hasEvent) {
-    isPlayerTurn = assertSequence(&event);
+  if (isPlayerTurn && event) {
+    isPlayerTurn = assertSequence(event);
 
     if (!isPlayerTurn) {
       if (asserts == sequenceLength) {
@@ -162,25 +220,62 @@ void loop() {
         lastAssertTime = currentTime;
       } else {
         isGameOver = true;
+        gameOverTime = currentTime;
       }
     }
   }
 }
 
-void reset() {
+void startMenu() {
+  isPlaying = false;
+  isDisplayBlinking = true;
+  displayVal = &mode;
+
+  setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
+}
+
+void startGame() {
+  isPlaying = true;
   isGameOver = false;
   isSequencePlaying = false;
   isPlayerTurn = false;
-  sound = SIMON_SOUND_START;
+  isDisplayBlinking = false;
+  displayVal = &score;
+  lastAssertTime = currentTime;
   asserts = 0;
   sequenceLength = 0;
   score = 0;
   isLedOn = false;
   currentLed = 0;
-  lastAssertTime = currentTime;
-  
+
+  setMode(mode);
   setPins(pins, ARRAY_LEN(pins), INPUT_PULLUP);
   setSound(SIMON_SOUND_START);
+  addToSequence(initial - increment);
+}
+
+void addToSequence(int count) {
+  int i;
+
+  for (i = 0; i < count; i++) {
+    sequence[sequenceLength++] = random(0, ARRAY_LEN(pins));
+  }
+}
+
+void setMode(int mode) {
+  if (mode == SIMON_MODE_1) {
+    initial = 1;
+    increment = 1;
+    speed = 1;
+  } else if (mode == SIMON_MODE_2) {
+    initial = 4;
+    increment = 2;
+    speed = 1;
+  } else if (mode == SIMON_MODE_3) {
+    initial = 4;
+    increment = 2;
+    speed = 2;
+  }
 }
 
 void setPins(uint8_t pins[], int length, uint8_t mode, uint8_t val = -1) {
@@ -201,14 +296,21 @@ void setSound(int id) {
   currentNote = 0;
 }
 
-void displayScore() {
+void updateDisplay() {
   static unsigned long previousTime = 0;
+  static unsigned long previousBlinkTime = 0;
+  static bool state = true;
   static uint8_t digit = 0; // 0 = units, 1 = tens... etc.
   int i;
-  int rest = score;
+  int rest = *displayVal;
   int number;
 
-  if (currentTime - previousTime < SIMON_DISPLAY_RATE) {
+  if (currentTime - previousBlinkTime >= SIMON_BLINK_INTERVAL) {
+    previousBlinkTime = currentTime;
+    state = !state;
+  }
+
+  if (currentTime - previousTime < SIMON_DISPLAY_INTERVAL) {
     return;
   }
 
@@ -231,7 +333,7 @@ void displayScore() {
   }
 
   // Turn on display for the current digit (leading zeros are not displayed)
-  if (number != 0 || digit == 0) {
+  if ((number != 0 || digit == 0) && (!isDisplayBlinking || state)) {
     digitalWrite(digitsPins[digit], HIGH);
   }
 
@@ -283,7 +385,7 @@ bool playSequence() {
 
   pin = sequence[currentLed];
 
-  if (currentTime - previousTime >= SIMON_PLAY_SPEED) {
+  if (currentTime - previousTime >= SIMON_BASE_SPEED / speed) {
     previousTime = currentTime;
 
     if (!isLedOn) {
