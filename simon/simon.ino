@@ -92,8 +92,8 @@ uint8_t numbers[][4] = {
   {1, 0, 0, 1}
 };
 
-// BCD decoder pins
-uint8_t decoderPins[] = {10, 9, 8, 7};
+// BCD decoder pins (D, C, B, A)
+uint8_t decoderPins[] = {8, 9, 10, 7};
 
 // Pins connected to the tens/units displays
 uint8_t digitsPins[] = {12, 11};
