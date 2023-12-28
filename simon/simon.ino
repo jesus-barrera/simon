@@ -139,7 +139,7 @@ unsigned long lastAssertTime = 0;
 unsigned long currentTime = 0;
 
 void setup() {
-  mode = 1; 
+  mode = 1;
   
   randomSeed(analogRead(0));
   Serial.begin(9600);
@@ -185,10 +185,6 @@ void gameLoop(Event* event) {
   
   if (isGameOver && currentTime - gameOverTime >= SIMON_RESET_DELAY) {
     startMenu();
-  }
-
-  if (sound && !playSound()) {
-    sound = 0;
   }
   
   if (!isGameOver 
